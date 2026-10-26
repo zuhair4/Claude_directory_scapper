@@ -7,7 +7,8 @@ import {
   deleteSnapshot,
 } from './historyDb.js';
 
-const PROXY_BASE = '/proxy/api/directory/plugins';
+const DEFAULT_PROXY =
+  import.meta.env.VITE_PROXY_BASE || '/proxy/api/directory/plugins';
 const FULL_API_BASE = 'https://api.anthropic.com/api/directory/plugins';
 
 const FIXED_PARAMS = {
@@ -136,12 +137,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchPage(params, stopRef) {
+async function fetchPage(params, stopRef, proxyBase = DEFAULT_PROXY) {
   let attempt = 0;
   while (true) {
     if (stopRef.current) return null;
     try {
-      const res = await fetch(`${PROXY_BASE}?${params.toString()}`);
+      const res = await fetch(`${proxyBase}?${params.toString()}`);
       if (res.ok) {
         return await res.json();
       }
@@ -224,7 +225,7 @@ function buildCSV(items) {
 }
 
 /* Modals */
-function ItemModal({ item, onClose }) {
+function ItemModal({ item, proxyBase, onClose }) {
   const [detail, setDetail] = useState(item);
   const [status, setStatus] = useState('loading');
   const [showRawJson, setShowRawJson] = useState(false);
@@ -258,7 +259,8 @@ function ItemModal({ item, onClose }) {
           limit: '5',
           filter: `id == '${escapedId}'`,
         });
-        const res = await fetch(`${PROXY_BASE}?${params.toString()}`, {
+        const activeProxy = proxyBase || DEFAULT_PROXY;
+        const res = await fetch(`${activeProxy}?${params.toString()}`, {
           signal: controller.signal,
         });
         if (res.ok) {
@@ -731,6 +733,123 @@ function HistoryModal({
   );
 }
 
+function ProxyModal({ currentProxy, onSave, onClose }) {
+  const [val, setVal] = useState(currentProxy);
+  const closeBtnRef = useRef(null);
+
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    closeBtnRef.current?.focus();
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const handleBackdropMouseDown = (e) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    onSave(val.trim() || DEFAULT_PROXY);
+    onClose();
+  };
+
+  const handleReset = () => {
+    setVal(DEFAULT_PROXY);
+    onSave(DEFAULT_PROXY);
+    onClose();
+  };
+
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={handleBackdropMouseDown}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="proxy-modal-title"
+    >
+      <div className="modal-dialog" style={{ maxWidth: '520px' }}>
+        <div className="modal-header">
+          <div>
+            <h2 id="proxy-modal-title" className="modal-title">
+              Proxy Configuration
+            </h2>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-2)', marginTop: '4px' }}>
+              Configure the API proxy for localhost or GitHub Pages.
+            </p>
+          </div>
+          <button
+            ref={closeBtnRef}
+            className="modal-close-btn"
+            onClick={onClose}
+            aria-label="Close dialog"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="modal-body" style={{ gap: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-2)' }}>
+              Proxy Endpoint URL
+            </label>
+            <input
+              type="text"
+              className="search-input"
+              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              placeholder="/proxy/api/directory/plugins or https://my-worker.workers.dev/proxy/api/directory/plugins"
+            />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', lineHeight: 1.4 }}>
+              • <strong>Localhost:</strong> uses <code>/proxy/api/directory/plugins</code> (forwarded by Vite).<br />
+              • <strong>GitHub Pages:</strong> enter your Cloudflare Worker URL (e.g. <code>https://my-proxy.workers.dev/proxy/api/directory/plugins</code>).
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: '0.8rem', padding: '5px 10px' }}
+              onClick={handleReset}
+            >
+              Reset to Default
+            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: '0.8rem', padding: '5px 12px' }}
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ fontSize: '0.8rem', padding: '5px 14px' }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 /* Main App Component */
 export default function App() {
   const [allItems, setAllItems] = useState([]);
@@ -750,6 +869,15 @@ export default function App() {
   const [viewing, setViewing] = useState(null);
   const [saveMsg, setSaveMsg] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [proxyBase, setProxyBase] = useState(() => {
+    return localStorage.getItem('claude_proxy_base') || DEFAULT_PROXY;
+  });
+  const [proxyModalOpen, setProxyModalOpen] = useState(false);
+
+  const handleSaveProxy = (newProxy) => {
+    setProxyBase(newProxy);
+    localStorage.setItem('claude_proxy_base', newProxy);
+  };
 
   const stopRef = useRef(false);
   const collectedRef = useRef([]);
@@ -798,7 +926,7 @@ export default function App() {
           params.set('page', cursor);
         }
 
-        const data = await fetchPage(params, stopRef);
+        const data = await fetchPage(params, stopRef, proxyBase);
         if (stopRef.current || !data) break;
 
         pagesCount++;
@@ -876,7 +1004,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [refreshHistory]);
+  }, [refreshHistory, proxyBase]);
 
   const stop = () => {
     stopRef.current = true;
@@ -1128,11 +1256,23 @@ export default function App() {
             <button className="btn btn-ghost" onClick={copyEndpoint}>
               {copied ? 'Copied' : 'Copy full URL'}
             </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setProxyModalOpen(true)}
+              title={`Proxy: ${proxyBase}`}
+            >
+              Proxy Settings
+              {proxyBase !== DEFAULT_PROXY && (
+                <span className="btn-count btn-count--muted" style={{ marginLeft: 4 }}>
+                  custom
+                </span>
+              )}
+            </button>
           </div>
           <p className="endpoint-note">
             Next pages append <code>&amp;page=&lt;next_page cursor&gt;</code> until the
             response has no <code>next_page</code>. The browser calls{' '}
-            <code>/proxy/api/directory/plugins?…</code>, which the Vite proxy forwards to
+            <code>{proxyBase}?…</code>, which forwards to
             the URL above.
           </p>
         </section>
@@ -1181,8 +1321,19 @@ export default function App() {
               <strong>Error:</strong> {error}
             </div>
             <div className="error-hint">
-              Make sure the Vite dev server is running (<code>npm run dev</code>) for the
-              proxy to work.
+              Make sure your proxy is running (e.g. Vite dev server with <code>npm run dev</code> or your Cloudflare Worker proxy).
+              <button
+                className="btn btn-ghost"
+                style={{
+                  marginTop: '8px',
+                  padding: '3px 10px',
+                  fontSize: '0.75rem',
+                  display: 'inline-flex',
+                }}
+                onClick={() => setProxyModalOpen(true)}
+              >
+                Configure Proxy URL
+              </button>
             </div>
           </div>
         )}
@@ -1389,7 +1540,11 @@ export default function App() {
 
       {/* Item Detail Modal */}
       {selected && (
-        <ItemModal item={selected} onClose={() => setSelected(null)} />
+        <ItemModal
+          item={selected}
+          proxyBase={proxyBase}
+          onClose={() => setSelected(null)}
+        />
       )}
 
       {/* History Modal */}
@@ -1401,6 +1556,15 @@ export default function App() {
           onRemove={removeSnapshot}
           historyBusy={historyBusy}
           historyError={historyError}
+        />
+      )}
+
+      {/* Proxy Settings Modal */}
+      {proxyModalOpen && (
+        <ProxyModal
+          currentProxy={proxyBase}
+          onSave={handleSaveProxy}
+          onClose={() => setProxyModalOpen(false)}
         />
       )}
     </div>
