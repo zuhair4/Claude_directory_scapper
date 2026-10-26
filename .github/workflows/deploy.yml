@@ -39,7 +39,9 @@ jobs:
           VITE_PROXY_BASE: ${{ secrets.VITE_PROXY_BASE }}
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
